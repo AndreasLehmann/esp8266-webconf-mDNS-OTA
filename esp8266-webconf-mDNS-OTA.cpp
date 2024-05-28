@@ -6,6 +6,7 @@
 
 */
 
+#include <Arduino.h>
 
 #include <ESP8266WiFi.h>
 #include <ESP8266mDNS.h>
@@ -32,6 +33,8 @@ const char* ap_default_ssid = "MARKISE-AP"; ///< Default SSID.
 const char* ap_default_psk = "MarkisE"; ///< Default PSK.
 /// @}
 
+void setMotor(int, int);
+
 /// Uncomment the next line for verbose output over UART.
 #define SERIAL_VERBOSE
 
@@ -54,7 +57,7 @@ unsigned long g_restartTime = 0;
 // Motor Array ; first 2 for Motor1, next 2 for Motor 2 and last 2 for motor 3  (M1a,M1b, M2a,M2b, M3a,M3b )
 const uint8_t MOTOR_IO_PIN[] = {D1,D2, D5,D6, D7,D8};
 
-long motorCountDown[] = {0, 0, 0};
+unsigned long motorCountDown[] = {0, 0, 0};
 int motorStatus[] = {0, 0, 0};
 Ticker motorStopTimer;
 
