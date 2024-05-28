@@ -1,10 +1,10 @@
 /**
- * @file esp8266-webconf-mDNS-OTA.ino
- * 
- * @author Pascal Gollor (http://www.pgollor.de/cms/)
- * @data 2015-08-17
- * 
- */
+   @file esp8266-webconf-mDNS-OTA.ino
+
+   @author Pascal Gollor (http://www.pgollor.de/cms/)
+   @data 2015-08-17
+
+*/
 
 
 #include <ESP8266WiFi.h>
@@ -13,22 +13,23 @@
 #include <FS.h>
 #include <ESP8266WebServer.h>
 #include <ArduinoOTA.h>
+#include <Ticker.h>
 
 
 /**
- * @brief mDNS and OTA Constants
- * @{
- */
-#define HOSTNAME "ESP8266-" ///< Hostename
+   @brief mDNS and OTA Constants
+   @{
+*/
+#define HOSTNAME "MARKISE-" ///< Hostename
 #define APORT 8266 ///< OTA Port
 /// @}
 
 /**
- * @brief Default WiFi connection information.
- * @{
- */
-const char* ap_default_ssid = "esp8266"; ///< Default SSID.
-const char* ap_default_psk = "esp8266esp8266"; ///< Default PSK.
+   @brief Default WiFi connection information.
+   @{
+*/
+const char* ap_default_ssid = "MARKISE-AP"; ///< Default SSID.
+const char* ap_default_psk = "MarkisE"; ///< Default PSK.
 /// @}
 
 /// Uncomment the next line for verbose output over UART.
@@ -50,16 +51,25 @@ String g_pass = "";
 unsigned long g_restartTime = 0;
 
 
+// Motor Array ; first 2 for Motor1, next 2 for Motor 2 and last 2 for motor 3  (M1a,M1b, M2a,M2b, M3a,M3b )
+const uint8_t MOTOR_IO_PIN[] = {D1,D2, D5,D6, D7,D8};
+
+long motorCountDown[] = {0, 0, 0};
+int motorStatus[] = {0, 0, 0};
+Ticker motorStopTimer;
+
+
+
 /**
- * @brief Read WiFi connection information from file system.
- * @param ssid String pointer for storing SSID.
- * @param pass String pointer for storing PSK.
- * @return True or False.
- * 
- * The config file have to containt the WiFi SSID in the first line
- * and the WiFi PSK in the second line.
- * Line seperator can be \r\n (CR LF) \r or \n.
- */
+   @brief Read WiFi connection information from file system.
+   @param ssid String pointer for storing SSID.
+   @param pass String pointer for storing PSK.
+   @return True or False.
+
+   The config file have to containt the WiFi SSID in the first line
+   and the WiFi PSK in the second line.
+   Line seperator can be \r\n (CR LF) \r or \n.
+*/
 bool loadConfig(String *ssid, String *pass)
 {
   // open file for reading.
@@ -74,7 +84,7 @@ bool loadConfig(String *ssid, String *pass)
   // Read content from config file.
   String content = configFile.readString();
   configFile.close();
-  
+
   content.trim();
 
   // Check if ther is a second line available.
@@ -120,11 +130,11 @@ bool loadConfig(String *ssid, String *pass)
 
 
 /**
- * @brief Save WiFi SSID and PSK to configuration file.
- * @param ssid SSID as string pointer.
- * @param pass PSK as string pointer,
- * @return True or False.
- */
+   @brief Save WiFi SSID and PSK to configuration file.
+   @param ssid SSID as string pointer.
+   @param pass PSK as string pointer,
+   @return True or False.
+*/
 bool saveConfig(String *ssid, String *pass)
 {
   // Open config file for writing.
@@ -141,23 +151,141 @@ bool saveConfig(String *ssid, String *pass)
   configFile.println(*pass);
 
   configFile.close();
-  
+
   return true;
 } // saveConfig
 
 
-/**
- * @brief Handle http root request.
- */
+/** #########################################################################
+   @brief Handle http root request.
+
+   URI:  http://esp8266-368a27/?M2=R   schaltet Motor 2 in rechtslauf
+*/
 void handleRoot()
+{
+  String indexHTML;
+
+  // Check for motor commands
+  int motor = 0;
+  if (g_server.argName(0) == "M1")
+  {
+    motor = 1;
+  }
+  else if (g_server.argName(0) == "M2")
+  {
+    motor = 2;
+  }
+  else if (g_server.argName(0) == "M3")
+  {
+    motor = 3;
+  }
+
+  // is there any command?
+  if ( motor > 0 )
+  {
+    int dir = 0; // default=stop
+    if (g_server.arg(0) == "L")
+    {
+      dir = 1;
+    }
+    else if (g_server.arg(0) == "R")
+    {
+      dir = 2;
+    }
+    setMotor (motor, dir);
+  }
+
+  File indexFile = SPIFFS.open("/index.html", "r");
+  if (indexFile)
+  {
+    indexHTML = indexFile.readString();
+    indexFile.close();
+
+    char buffer[5];
+    itoa(motorStatus[0], buffer, 10);
+    indexHTML.replace("[M1_Status]", buffer);
+    itoa(motorStatus[1], buffer, 10);
+    indexHTML.replace("[M2_Status]", buffer);
+    itoa(motorStatus[2], buffer, 10);
+    indexHTML.replace("[M3_Status]", buffer);
+
+  }
+  else
+  {
+    indexHTML = "<!DOCTYPE html><html><head><title>File not found</title></head><body><h1>File not found.</h1></body></html>";
+  }
+
+  g_server.send (200, "text/html", indexHTML);
+} // handleRoot
+
+
+/** #########################################################################
+   @brief Switch IO-Pins to execute motor commands
+   @param motor motor number as int 1,2 or 3 // not 0!
+   @param dir  direction as int : 0=stop
+
+*/
+void setMotor(int motor, int dir)
+{
+  Serial.print(motor); Serial.print("="); Serial.println(dir);
+
+  bool a = LOW, b = LOW; // Default=STOP
+
+  if (dir == 1) // RECHTS
+  {
+    a = HIGH;
+  } else if (dir == 2) // LINKS
+  {
+    b = HIGH;
+  } else {
+    dir = 0; // must be 0 if not 1 and not 2 !
+  }
+
+  motorStatus[motor - 1] = dir;
+
+  Serial.print(MOTOR_IO_PIN[ motor * 2 - 2 ]); Serial.print("="); Serial.println(a);
+  Serial.print(MOTOR_IO_PIN[ motor * 2 - 1 ]); Serial.print("="); Serial.println(b);
+
+  digitalWrite( MOTOR_IO_PIN[ motor * 2 - 2 ] , a);
+  digitalWrite( MOTOR_IO_PIN[ motor * 2 - 1 ] , b);
+
+  if (dir != 0) // set stop time
+  {
+    motorCountDown[motor - 1] = millis() + 10000 ; /// 10 Sekunden!
+  } else {
+    motorCountDown[motor - 1] = 0;
+  }
+
+} // setMotor
+
+
+void checkRunningMotors()
+{
+
+  for (int i = 0; i < 3; i++) {
+    //Serial.println(motorCountDown[i]);
+    if (motorCountDown[i] > 0) { // is motor still running?
+      if (millis() > motorCountDown[i] ) { // time up?
+        setMotor(i + 1, 0);
+      }
+    }
+  }
+
+} // checkRunningMotors
+
+
+/** #########################################################################
+   @brief Handle http config request.
+*/
+void handleConfig()
 {
   String indexHTML;
   char buff[10];
   uint16_t s = millis() / 1000;
   uint16_t m = s / 60;
   uint8_t h = m / 60;
-  
-  File indexFile = SPIFFS.open("/index.html", "r");
+
+  File indexFile = SPIFFS.open("/config.html", "r");
   if (indexFile)
   {
     indexHTML = indexFile.readString();
@@ -180,20 +308,20 @@ void handleRoot()
   }
 
   g_server.send (200, "text/html", indexHTML);
-} // handleRoot
+} // handleConfig
 
 
-/**
- * @brief Handle set request from http server.
- * 
- * URI: /set?ssid=[WiFi SSID],pass=[WiFi Pass]
- */
+/** #########################################################################################################
+   @brief Handle set request from http server.
+
+   URI: /set?ssid=[WiFi SSID],pass=[WiFi Pass]
+*/
 void handleSet()
 {
   String response = "<!DOCTYPE html><html><head><meta http-equiv=\"refresh\" content=\"2; URL=http://";
   response += HOSTNAME;
   response += ".local\"></head><body>";
-  
+
   // Some debug output
   Serial.print("uri: ");
   Serial.println(g_server.uri());
@@ -255,8 +383,8 @@ void handleSet()
 
 
 /**
- * @brief Load loading.gif from filesytem and draw.
- */
+   @brief Load loading.gif from filesytem and draw.
+*/
 void drawLoading()
 {
   File gif = SPIFFS.open("/loading.gif", "r");
@@ -272,16 +400,21 @@ void drawLoading()
 } // drawLoading
 
 
-/**
- * @brief Arduino setup function.
- */
+/**########################################################################
+   @brief Arduino setup function.
+*/
 void setup()
 {
   g_ssid = "";
   g_pass = "";
 
+  // set all motor pins to OUTPUT & low
+  for (int i = 0; i < 6; i++){
+    pinMode(MOTOR_IO_PIN[i], OUTPUT);
+    digitalWrite(MOTOR_IO_PIN[i], LOW);
+  }
+
   Serial.begin(115200);
-  
   delay(100);
 
   Serial.println("\r\n");
@@ -296,7 +429,6 @@ void setup()
   // Print hostname.
   Serial.println("Hostname: " + hostname);
   //Serial.println(WiFi.hostname());
-
 
   // Initialize file system.
   if (!SPIFFS.begin())
@@ -356,7 +488,7 @@ void setup()
   Serial.println();
 
   // Check connection
-  if(WiFi.status() == WL_CONNECTED)
+  if (WiFi.status() == WL_CONNECTED)
   {
     // ... print IP Address
     Serial.print("IP address: ");
@@ -365,7 +497,7 @@ void setup()
   else
   {
     Serial.println("Can not connect to WiFi station. Go into AP mode.");
-    
+
     // Go into AP mode.
     WiFi.mode(WIFI_AP);
 
@@ -391,8 +523,9 @@ void setup()
 
   // Initialize web server.
   // ... Add requests.
-  g_server.on("/", handleRoot);
-  g_server.on("/set", HTTP_GET, handleSet);
+  g_server.on("/", handleRoot); /* Einstiegsseite */
+  g_server.on("/config", handleConfig); /* Konfigurationsseite mit RESET*/
+  g_server.on("/set", HTTP_GET, handleSet); /* Setze WIFI Passwort*/
   g_server.on("/restart", []() {
     g_server.send(200, "text/html", RESTART_HTML_ANSWER);
     g_restartTime = millis() + 100;
@@ -401,12 +534,14 @@ void setup()
 
   // ... Start server.
   g_server.begin();
+
+  motorStopTimer.attach(0.5, checkRunningMotors );
 }
 
 
 /**
- * @brief Arduino loop function.
- */
+   @brief Arduino loop function.
+*/
 void loop()
 {
   // Handle OTA server.
