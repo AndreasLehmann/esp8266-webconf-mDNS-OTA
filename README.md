@@ -56,7 +56,16 @@ For other flash sizes you can get the address information from your arduino esp8
 `[X]` means the flash size and `[Y]` the spiffs size. This files contains a variable like `_SPIFFS_start`.
 The start address for your file system is: `_SPIFFS_start` - `0x40200000`
 
-## Troubleshooting
+# Update OTA
+
+To setup ota -> Modify platform.ini and insert the correct ip adrress
+
+Upload Web pages to SPIFF
+```platformio run -t buildfs```
+```platformio run -t uploadfs```
+
+
+# Troubleshooting
 
 If OTA updates do not work you can try to clear the hole chip. I use a linux shell for the commands.
 At first create empty binary image:
